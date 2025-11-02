@@ -1,2 +1,17 @@
+# This is where I downloaded the nixos images for the pi
 images
+
+# Stinky ds store
 .DS_Store
+
+# Direnv
+.direnv/
+
+# Nix build results
+result
+result-*
+
+# Nix development shell artifacts
+.devenv/
+
+node_modules/
