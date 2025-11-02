@@ -2,19 +2,10 @@
   "name": "web",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "configure": "alchemy configure",
-    "deploy": "alchemy deploy",
-    "dev": "alchemy dev",
-    "destroy": "alchemy destroy",
-    "status": "alchemy status"
-  },
-  "dependencies": {
-    "alchemy": "latest"
-  },
+  "type": "module",
+  "scripts": {},
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
+    "@types/node": "^24.9.2"
   },
   "author": "",
   "license": "ISC",
