@@ -4,18 +4,15 @@
   lib,
   ...
 }:
-
 let
-  user = "****";
-  password = "****";
-  SSID = "****";
-  SSIDpassword = "****";
+  user = "guest";
+  password = "***";
+  SSID = "YourNetworkName";
+  SSIDpassword = "***";
   interface = "wlan0";
   hostname = "myhostname";
-  nixosHardwareVersion = "7f1836531b126cfcf584e7d7d71bf8758bb58969";
 in
 {
-
   boot = {
     kernelPackages = pkgs.linuxKernel.packages.linux_rpi4;
     initrd.availableKernelModules = [
@@ -28,10 +25,6 @@ in
       generic-extlinux-compatible.enable = true;
     };
   };
-
-  imports = [
-    "${fetchTarball "https://github.com/NixOS/nixos-hardware/archive/${nixosHardwareVersion}.tar.gz"}/raspberry-pi/4"
-  ];
 
   fileSystems = {
     "/" = {
@@ -50,7 +43,7 @@ in
     };
     interfaces."${interface}".ipv4.addresses = [
       {
-        address = "10.0.1.200"; # 200 is a high number to avoid DHCP conflicts
+        address = "10.0.1.200";
         prefixLength = 24;
       }
     ];
@@ -64,7 +57,21 @@ in
   environment.systemPackages = with pkgs; [
     vim
     git
+    xterm
   ];
+
+  fonts = {
+    packages = with pkgs; [
+      jetbrains-mono
+    ];
+    fontconfig = {
+      defaultFonts = {
+        monospace = [ "JetBrains Mono" ];
+        sansSerif = [ "JetBrains Mono" ];
+        serif = [ "JetBrains Mono" ];
+      };
+    };
+  };
 
   # Enable GPU acceleration
   hardware.raspberry-pi."4".fkms-3d.enable = true;
@@ -95,7 +102,10 @@ in
     users."${user}" = {
       isNormalUser = true;
       password = password;
-      extraGroups = [ "wheel" ];
+      extraGroups = [
+        "wheel"
+        "video" # Required for camera access
+      ];
       openssh.authorizedKeys.keys = [
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPcdh0STKBGoNZMyTqQWjmrlkfMNkmRRq/Ki1PQcefB spenceropope@gmail.com"
       ];
@@ -103,5 +113,14 @@ in
   };
 
   hardware.enableRedistributableFirmware = true;
+
+  # Enable flakes
+  nix.settings.experimental-features = [
+    "nix-command"
+    "flakes"
+  ];
+
   system.stateVersion = "23.11";
 }
+
+# run with: sudo nixos-rebuild switch --flake /etc/nixos#myhostname
