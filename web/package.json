@@ -1,13 +1,22 @@
 {
-  "name": "web",
+  "name": "pi-camera-monitor-web",
   "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
   "type": "module",
-  "scripts": {},
-  "devDependencies": {
-    "@types/node": "^24.9.2"
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
-  "author": "",
-  "license": "ISC",
-  "description": ""
+  "devDependencies": {
+    "@types/node": "^24.9.2",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.3"
+  },
+  "license": "MIT",
+  "description": "Mobile viewer for the Raspberry Pi camera monitor",
+  "dependencies": {
+    "hls.js": "^1.7.1"
+  }
 }

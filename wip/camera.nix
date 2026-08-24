@@ -141,11 +141,14 @@ in
   boot.kernelParams = [ "cma=256M" ];
   services.udev.extraRules = ''
     SUBSYSTEM=="dma_heap", GROUP="video", MODE="0660"
+    SUBSYSTEM=="dma_heap", KERNEL=="reserved", SYMLINK+="dma_heap/vidbuf_cached"
   '';
 
   environment.systemPackages = with pkgs; [
     camera-snapshot
+    ffmpeg
     libcamera
+    rpicam-apps
     v4l-utils
   ];
 }

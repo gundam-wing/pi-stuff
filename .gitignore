@@ -7,6 +7,13 @@ images
 # Direnv
 .direnv/
 
+# Local environment and secret files
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
 # Nix build results
 result
 result-*
@@ -15,3 +22,7 @@ result-*
 .devenv/
 
 node_modules/
+target/
+web/dist/
+*.m3u8
+segment-*.ts

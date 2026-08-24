@@ -1,5 +1,5 @@
 {
-  description = "Raspberry Pi 4 NixOS configuration with Camera Module 3";
+  description = "Raspberry Pi 4 NixOS camera monitor";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/b3d51a0365f6695e7dd5cdf3e180604530ed33b4";
@@ -8,31 +8,21 @@
       url = "github:nix-community/home-manager/af119feb17cb242398e0fb97f92b867d25882522";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    monitor-src = {
-      url = "path:../monitor";
-      flake = false;
-    };
-    web-src = {
-      url = "path:../web";
-      flake = false;
-    };
   };
 
   outputs =
     {
-      self,
       nixpkgs,
       nixos-hardware,
       home-manager,
-      monitor-src,
-      web-src,
       ...
     }:
     {
       nixosConfigurations.myhostname = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         specialArgs = {
-          inherit monitor-src web-src;
+          monitor-src = ./monitor;
+          web-src = ./web;
         };
         modules = [
           nixos-hardware.nixosModules.raspberry-pi-4
@@ -40,19 +30,19 @@
             nixpkgs.overlays = [
               (
                 final: _prev: {
-                  rpicam-apps = final.callPackage ./rpicam-apps.nix { };
+                  rpicam-apps = final.callPackage ./wip/rpicam-apps.nix { };
                 }
               )
             ];
           }
-          ./configuration.nix
-          ./camera.nix
-          ./monitor.nix
+          ./wip/configuration.nix
+          ./wip/camera.nix
+          ./wip/monitor.nix
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
-            home-manager.users.guest = import ./home.nix;
+            home-manager.users.guest = import ./wip/home.nix;
           }
         ];
       };
