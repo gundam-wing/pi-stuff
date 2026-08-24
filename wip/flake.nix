@@ -28,6 +28,7 @@
           # nixos-raspi-camera.nixosModules.raspi-camera
           nixos-hardware.nixosModules.raspberry-pi-4
           ./configuration.nix
+          ./camera.nix
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;
