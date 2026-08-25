@@ -9,10 +9,13 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
+  "engines": {
+    "node": "^24"
+  },
   "devDependencies": {
     "@types/node": "^24.9.2",
     "typescript": "^7.0.2",
-    "vite": "^6.4.3"
+    "vite": "^8.2.2"
   },
   "license": "MIT",
   "description": "Mobile viewer for the Raspberry Pi camera monitor",

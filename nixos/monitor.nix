@@ -14,7 +14,8 @@ let
     pname = "pi-camera-monitor-web";
     version = "0.1.0";
     src = web-src;
-    npmDepsHash = "sha256-gJDjR7y6XJSLllyQB/TgIB3JZqTOvDRHCeNaYf7LW2o=";
+    nodejs = pkgs.nodejs_24;
+    npmDepsHash = "sha256-Iu5nBk7BEpRGFaodh0dSMPMqXQIbrfVlyaSawCFKCu0=";
 
     npmBuildScript = "build";
     installPhase = ''
