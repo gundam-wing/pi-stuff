@@ -21,6 +21,18 @@
         "type": "github"
       }
     },
+    "monitor-src": {
+      "flake": false,
+      "locked": {
+        "path": "./monitor",
+        "type": "path"
+      },
+      "original": {
+        "path": "./monitor",
+        "type": "path"
+      },
+      "parent": []
+    },
     "nixos-hardware": {
       "locked": {
         "lastModified": 1762267440,
@@ -56,9 +68,44 @@
     "root": {
       "inputs": {
         "home-manager": "home-manager",
+        "monitor-src": "monitor-src",
         "nixos-hardware": "nixos-hardware",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "sops-nix": "sops-nix",
+        "web-src": "web-src"
       }
+    },
+    "sops-nix": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786629091,
+        "narHash": "sha256-gkig4nPi1CWc4Z50GBsjE4ygSE7hMpl/TwID2an2Cck=",
+        "owner": "Mic92",
+        "repo": "sops-nix",
+        "rev": "a8627b21b9107c5711c96b84f32a9a4b3d45295f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Mic92",
+        "repo": "sops-nix",
+        "type": "github"
+      }
+    },
+    "web-src": {
+      "flake": false,
+      "locked": {
+        "path": "./web",
+        "type": "path"
+      },
+      "original": {
+        "path": "./web",
+        "type": "path"
+      },
+      "parent": []
     }
   },
   "root": "root",

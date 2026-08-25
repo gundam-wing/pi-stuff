@@ -7,19 +7,25 @@ a Rust service for supervision and HTTP, and a TypeScript web viewer.
 ## Deploy
 
 The root flake assembles the application and the NixOS modules under `wip/`.
-Before rebuilding, create the Wi-Fi environment file on the Pi without adding
-it to Git:
+Deployment secrets are encrypted in `wip/secrets/pi.yaml` for both the Pi host
+SSH key and the administrator SSH key. Before the first rebuild, generate a
+yescrypt password hash:
 
 ```sh
-sudo install -m 0600 /dev/null /etc/nixos/wireless.env
-sudoedit /etc/nixos/wireless.env
+nix shell nixpkgs#mkpasswd -c mkpasswd -m yescrypt
 ```
 
-Its content is:
+Then decrypt and edit the secrets file using the administrator SSH private key:
 
-```text
-SSID_PASSWORD=your-real-wifi-password
+```sh
+export SOPS_AGE_SSH_PRIVATE_KEY_FILE="$HOME/.ssh/id_ed25519"
+nix run nixpkgs#sops -- wip/secrets/pi.yaml
 ```
+
+Replace both `CHANGE_ME` values and paste the generated hash into
+`guest_password_hash`. Also replace the public key in `wip/configuration.nix`
+with a key dedicated to this host. Public keys are not secret and can remain in
+Git. The password is required for `sudo`; SSH remains public-key-only.
 
 Copy this repository to the Pi (the `monitor/` and `web/` directories are Nix
 build inputs), then apply the configuration:
@@ -27,6 +33,10 @@ build inputs), then apply the configuration:
 ```sh
 sudo nixos-rebuild switch --max-jobs 2 --cores 2 --flake .#myhostname
 ```
+
+The Wi-Fi connection keeps the Pi at `10.0.1.200` and is materialized under
+`/run` from the encrypted values. The Pi host SSH private key in
+`/etc/ssh/ssh_host_ed25519_key` decrypts secrets during boot.
 
 The service starts automatically. Useful checks:
 
@@ -50,15 +60,26 @@ binary cache is the next step if builds become frequent.
 Tailscale provides the encrypted private network; it does not host or relay the
 web application under normal operation. No router ports need to be opened.
 
-1. On the Pi, run `sudo tailscale up`.
+1. From a physical console, run `sudo tailscale up`.
 2. Open the displayed URL once and approve the Pi.
 3. In the Tailscale admin console, disable key expiry for this always-on Pi.
 4. Install Tailscale on the phone and sign in to the same account.
-5. With Tailscale connected, open `http://myhostname:8080`.
+5. With Tailscale connected, open `http://pi-camera:8080`.
 
-Only TCP port 8080 on `tailscale0` is allowed by the NixOS firewall. Members of
-the same tailnet can view the MVP stream, so remove untrusted members or add a
-Tailscale access-control policy before sharing the tailnet.
+From the Mac, connect to the Pi with:
+
+```sh
+ssh guest@pi-camera
+```
+
+If local hostname resolution is unavailable, use `ssh guest@10.0.1.200`.
+
+TCP ports 22 and 8080 are allowed on `tailscale0`; only SSH port 22 is also
+allowed on the trusted Wi-Fi interface. This permits development access from
+the local network when Tailscale is unavailable. SSH password and root login,
+forwarding, and tunneling remain disabled. Members of the same tailnet can view
+the MVP stream, so remove untrusted members or add a Tailscale access-control
+policy before sharing the tailnet.
 
 ## Development
 

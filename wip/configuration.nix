@@ -6,13 +6,26 @@
 }:
 let
   user = "guest";
-  password = "***";
-  SSID = "YourNetworkName";
-  SSIDpassword = "***";
+  wifiSsid = "YourNetworkName";
   interface = "wlan0";
-  hostname = "myhostname";
+  hostname = "pi-camera";
 in
 {
+  sops = {
+    defaultSopsFile = ./secrets/pi.yaml;
+    age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+
+    secrets = {
+      wifi_password = { };
+      guest_password_hash.neededForUsers = true;
+    };
+
+    templates."wireless.env" = {
+      content = "SSID_PASSWORD=${config.sops.placeholder.wifi_password}";
+      mode = "0400";
+    };
+  };
+
   boot = {
     kernelPackages = pkgs.linuxKernel.packages.linux_rpi4;
     initrd.availableKernelModules = [
@@ -38,7 +51,8 @@ in
     hostName = hostname;
     wireless = {
       enable = true;
-      networks."${SSID}".psk = SSIDpassword;
+      secretsFile = config.sops.templates."wireless.env".path;
+      networks."${wifiSsid}".pskRaw = "ext:SSID_PASSWORD";
       interfaces = [ interface ];
     };
     interfaces."${interface}".ipv4.addresses = [
@@ -76,18 +90,7 @@ in
   # Enable GPU acceleration
   hardware.raspberry-pi."4".fkms-3d.enable = true;
 
-  # Enable passwordless sudo.
-  security.sudo.extraRules = [
-    {
-      users = [ user ];
-      commands = [
-        {
-          command = "ALL";
-          options = [ "NOPASSWD" ];
-        }
-      ];
-    }
-  ];
+  security.sudo.wheelNeedsPassword = true;
 
   services.xserver = {
     enable = true;
@@ -95,30 +98,57 @@ in
     desktopManager.xfce.enable = true;
   };
 
-  services.openssh.enable = true;
+  services.openssh = {
+    enable = true;
+    openFirewall = false;
+    settings = {
+      AllowTcpForwarding = false;
+      GatewayPorts = "no";
+      PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+      PermitRootLogin = "no";
+      PermitTunnel = false;
+      X11Forwarding = false;
+    };
+  };
+  services.tailscale = {
+    enable = true;
+    openFirewall = true;
+  };
+  services.pi-camera-monitor.enable = true;
 
   users = {
     mutableUsers = false;
     users."${user}" = {
       isNormalUser = true;
-      password = password;
+      hashedPasswordFile = config.sops.secrets.guest_password_hash.path;
       extraGroups = [
         "wheel"
         "video" # Required for camera access
       ];
+      # Public keys are safe to commit; use a key dedicated to this host.
       openssh.authorizedKeys.keys = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPcdh0STKBGoNZMyTqQWjmrlkfMNkmRRq/Ki1PQcefB spenceropope@gmail.com"
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPcdh0STKBGoNZMyTqQWjmrlkfMNkmRRq/Ki1PQcefB"
       ];
     };
   };
 
+  # Administrative SSH is reachable over Tailscale and the trusted Wi-Fi LAN.
+  networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 22 ];
+  networking.firewall.interfaces."${interface}".allowedTCPPorts = [ 22 ];
+
   hardware.enableRedistributableFirmware = true;
 
   # Enable flakes
-  nix.settings.experimental-features = [
-    "nix-command"
-    "flakes"
-  ];
+  nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
+    # Native builds can otherwise exhaust RAM and make SSH unresponsive.
+    max-jobs = 2;
+    cores = 2;
+  };
 
   system.stateVersion = "23.11";
 }

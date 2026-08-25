@@ -1,0 +1,6 @@
+creation_rules:
+  - path_regex: ^wip/secrets/[^/]+\.yaml$
+    key_groups:
+      - age:
+          - age1v6aqchr2l7ymr0s2af8q9qpszhw74kk003qmql383v8gv43ma4tqks92mq
+          - age1q6au8xn76hljh8xsu0d9javfy2e8qgtrjthsdmcjxkp9hr0hjdrqkukg65

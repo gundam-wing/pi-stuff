@@ -8,6 +8,18 @@
       url = "github:nix-community/home-manager/af119feb17cb242398e0fb97f92b867d25882522";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    monitor-src = {
+      url = "path:./monitor";
+      flake = false;
+    };
+    web-src = {
+      url = "path:./web";
+      flake = false;
+    };
   };
 
   outputs =
@@ -15,14 +27,16 @@
       nixpkgs,
       nixos-hardware,
       home-manager,
+      sops-nix,
+      monitor-src,
+      web-src,
       ...
     }:
     {
       nixosConfigurations.myhostname = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         specialArgs = {
-          monitor-src = ./monitor;
-          web-src = ./web;
+          inherit monitor-src web-src;
         };
         modules = [
           nixos-hardware.nixosModules.raspberry-pi-4
@@ -39,6 +53,7 @@
           ./wip/camera.nix
           ./wip/monitor.nix
           home-manager.nixosModules.home-manager
+          sops-nix.nixosModules.sops
           {
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
