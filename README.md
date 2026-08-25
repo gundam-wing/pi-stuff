@@ -27,10 +27,23 @@ Replace both `CHANGE_ME` values and paste the generated hash into
 with a key dedicated to this host. Public keys are not secret and can remain in
 Git. The password is required for `sudo`; SSH remains public-key-only.
 
-Copy this repository to the Pi (the `monitor/` and `web/` directories are Nix
-build inputs), then apply the configuration:
+The `monitor/` and `web/` directories are Nix flake inputs, so they have to be
+on the Pi. From this machine, copy the tree and switch the running generation:
 
 ```sh
+./scripts/deploy.sh
+```
+
+That rsyncs into `~/pi-stuff` on `guest@10.0.1.200`, skipping Git metadata,
+build artifacts, and the large `images/` tree, then runs `nixos-rebuild switch`
+over SSH. Sudo on the Pi prompts for the `guest` password. Copy without
+switching with `./scripts/deploy.sh --sync-only`. Override the SSH target with
+`PI_HOST=guest@pi-camera` when Tailscale hostname verification is set up.
+
+If you are already on the Pi:
+
+```sh
+cd ~/pi-stuff
 sudo nixos-rebuild switch --max-jobs 2 --cores 2 --flake .#myhostname
 ```
 
