@@ -38,6 +38,7 @@ struct Config {
     capture_command: Vec<String>,
     ffmpeg_bin: String,
     frame_rate: u32,
+    revision: String,
 }
 
 impl Config {
@@ -63,6 +64,7 @@ impl Config {
         if frame_rate == 0 {
             bail!("MONITOR_FRAME_RATE must be greater than zero");
         }
+        let revision = env::var("MONITOR_REVISION").unwrap_or_else(|_| "dev".into());
 
         Ok(Self {
             bind,
@@ -71,6 +73,7 @@ impl Config {
             capture_command,
             ffmpeg_bin,
             frame_rate,
+            revision,
         })
     }
 }
@@ -78,7 +81,16 @@ impl Config {
 #[derive(Clone)]
 struct AppState {
     hls_dir: PathBuf,
+    revision: String,
     stream: Arc<RwLock<StreamStatus>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusResponse {
+    #[serde(flatten)]
+    stream: StreamStatus,
+    revision: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,6 +135,7 @@ async fn main() -> Result<()> {
 
     let state = AppState {
         hls_dir: config.hls_dir.clone(),
+        revision: config.revision.clone(),
         stream: Arc::new(RwLock::new(StreamStatus::default())),
     };
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -144,7 +157,10 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("bind monitor server to {}", config.bind))?;
-    info!("monitor listening on http://{}", config.bind);
+    info!(
+        "monitor listening on http://{} (rev {})",
+        config.bind, config.revision
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -156,18 +172,25 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn status(State(state): State<AppState>) -> Json<StreamStatus> {
-    Json(state.stream.read().await.clone())
+fn status_response(state: &AppState, stream: StreamStatus) -> StatusResponse {
+    StatusResponse {
+        revision: state.revision.clone(),
+        stream,
+    }
+}
+
+async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
+    Json(status_response(&state, state.stream.read().await.clone()))
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    let status = state.stream.read().await.clone();
-    let code = if status.phase == StreamPhase::Live {
+    let stream = state.stream.read().await.clone();
+    let code = if stream.phase == StreamPhase::Live {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    (code, Json(status))
+    (code, Json(status_response(&state, stream)))
 }
 
 async fn playlist(State(state): State<AppState>) -> Response {
@@ -471,5 +494,17 @@ mod tests {
         assert!(!valid_segment_name("../secret.ts"));
         assert!(!valid_segment_name("segment-current.m3u8"));
         assert!(!valid_segment_name("segment-.ts"));
+    }
+
+    #[test]
+    fn status_payload_includes_revision() {
+        let payload = StatusResponse {
+            stream: StreamStatus::default(),
+            revision: "abc1234-dirty".into(),
+        };
+        let json = serde_json::to_value(payload).unwrap();
+        assert_eq!(json["revision"], "abc1234-dirty");
+        assert_eq!(json["phase"], "starting");
+        assert_eq!(json["restarts"], 0);
     }
 }

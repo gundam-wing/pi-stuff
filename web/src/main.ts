@@ -8,6 +8,7 @@ interface StreamStatus {
   message: string | null;
   startedAt: number | null;
   restarts: number;
+  revision: string;
 }
 
 const video = element<HTMLVideoElement>("video");
@@ -18,6 +19,7 @@ const status = element<HTMLDivElement>("status");
 const statusLabel = element<HTMLSpanElement>("status-label");
 const connection = element<HTMLSpanElement>("connection");
 const restarts = element<HTMLSpanElement>("restarts");
+const revision = element<HTMLSpanElement>("revision");
 const streamUrl = "/hls/stream.m3u8";
 
 let hls: Hls | null = null;
@@ -126,6 +128,10 @@ async function pollStatus(): Promise<void> {
       current.restarts > 0
         ? `${current.restarts} pipeline restart${current.restarts === 1 ? "" : "s"}`
         : "";
+    revision.textContent = current.revision ? `rev ${current.revision}` : "";
+    revision.title = current.revision
+      ? `Deployed source revision ${current.revision}`
+      : "";
 
     if (current.phase === "live" && !video.src && !hls) {
       await connectPlayer();

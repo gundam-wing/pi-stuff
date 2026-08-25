@@ -24,6 +24,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       nixos-hardware,
       home-manager,
@@ -32,15 +33,29 @@
       web-src,
       ...
     }:
+    let
+      inherit (nixpkgs) lib;
+      revFile = self + "/REVISION";
+      fromFile =
+        if builtins.pathExists revFile then lib.removeSuffix "\n" (builtins.readFile revFile) else "";
+      monitorRevision =
+        if fromFile != "" then
+          fromFile
+        else
+          self.dirtyShortRev or self.shortRev or "unknown";
+    in
     {
       nixosConfigurations.myhostname = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         specialArgs = {
-          inherit monitor-src web-src;
+          inherit monitor-src monitorRevision web-src;
         };
         modules = [
           nixos-hardware.nixosModules.raspberry-pi-4
           {
+            system.configurationRevision = self.rev or self.dirtyRev or (
+              if monitorRevision == "unknown" then null else monitorRevision
+            );
             nixpkgs.overlays = [
               (
                 final: _prev: {

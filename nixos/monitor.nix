@@ -2,6 +2,7 @@
   config,
   lib,
   monitor-src,
+  monitorRevision,
   pkgs,
   web-src,
   ...
@@ -107,6 +108,7 @@ in
         MONITOR_WEB_DIR = "${monitorWeb}/share/pi-camera-monitor/web";
         MONITOR_FFMPEG_BIN = "${pkgs.ffmpeg}/bin/ffmpeg";
         MONITOR_FRAME_RATE = toString cfg.frameRate;
+        MONITOR_REVISION = monitorRevision;
         MONITOR_CAPTURE_COMMAND = lib.concatStringsSep " " [
           "${pkgs.rpicam-apps}/bin/rpicam-vid"
           "--camera 0"

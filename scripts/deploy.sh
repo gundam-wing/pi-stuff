@@ -32,6 +32,18 @@ fi
 
 cd "$root"
 
+# The Pi copy excludes .git, so bake a source revision into the tree that Nix
+# can read at eval time. Prefer a dirty-aware git short hash over a store hash.
+if rev="$(git rev-parse --short HEAD 2>/dev/null)"; then
+  if [[ -n "$(git status --porcelain)" ]]; then
+    rev="${rev}-dirty"
+  fi
+  printf '%s\n' "$rev" > "$root/REVISION"
+  echo "Stamped revision $rev"
+else
+  echo "warning: git revision unavailable; Nix will fall back to flake metadata" >&2
+fi
+
 echo "Syncing $root -> $host:$remote_dir"
 rsync -az --delete --delete-excluded \
   --exclude='.git/' \
