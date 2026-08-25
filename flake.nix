@@ -44,20 +44,20 @@
             nixpkgs.overlays = [
               (
                 final: _prev: {
-                  rpicam-apps = final.callPackage ./wip/rpicam-apps.nix { };
+                  rpicam-apps = final.callPackage ./nixos/rpicam-apps.nix { };
                 }
               )
             ];
           }
-          ./wip/configuration.nix
-          ./wip/camera.nix
-          ./wip/monitor.nix
+          ./nixos/configuration.nix
+          ./nixos/camera.nix
+          ./nixos/monitor.nix
           home-manager.nixosModules.home-manager
           sops-nix.nixosModules.sops
           {
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
-            home-manager.users.guest = import ./wip/home.nix;
+            home-manager.users.guest = import ./nixos/home.nix;
           }
         ];
       };

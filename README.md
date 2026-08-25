@@ -6,8 +6,8 @@ a Rust service for supervision and HTTP, and a TypeScript web viewer.
 
 ## Deploy
 
-The root flake assembles the application and the NixOS modules under `wip/`.
-Deployment secrets are encrypted in `wip/secrets/pi.yaml` for both the Pi host
+The root flake assembles the application and the NixOS modules under `nixos/`.
+Deployment secrets are encrypted in `nixos/secrets/pi.yaml` for both the Pi host
 SSH key and the administrator SSH key. Before the first rebuild, generate a
 yescrypt password hash:
 
@@ -19,11 +19,11 @@ Then decrypt and edit the secrets file using the administrator SSH private key:
 
 ```sh
 export SOPS_AGE_SSH_PRIVATE_KEY_FILE="$HOME/.ssh/id_ed25519"
-nix run nixpkgs#sops -- wip/secrets/pi.yaml
+nix run nixpkgs#sops -- nixos/secrets/pi.yaml
 ```
 
 Replace both `CHANGE_ME` values and paste the generated hash into
-`guest_password_hash`. Also replace the public key in `wip/configuration.nix`
+`guest_password_hash`. Also replace the public key in `nixos/configuration.nix`
 with a key dedicated to this host. Public keys are not secret and can remain in
 Git. The password is required for `sudo`; SSH remains public-key-only.
 
