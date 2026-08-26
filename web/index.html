@@ -29,6 +29,15 @@
         </div>
       </section>
 
+      <section class="events" aria-label="Motion stills">
+        <div class="events-header">
+          <h2>Motion</h2>
+          <span id="motion-score"></span>
+        </div>
+        <p id="events-empty">No motion yet.</p>
+        <div id="events-strip" class="events-strip" hidden></div>
+      </section>
+
       <footer>
         <span id="connection">Checking stream</span>
         <span class="meta">
@@ -37,6 +46,17 @@
         </span>
       </footer>
     </main>
+    <dialog id="lightbox" class="lightbox" aria-label="Motion capture">
+      <form method="dialog">
+        <button type="submit" class="lightbox-close" aria-label="Close">Close</button>
+      </form>
+      <img id="lightbox-image" alt="" />
+      <p id="lightbox-caption"></p>
+      <div class="lightbox-nav">
+        <button type="button" id="lightbox-prev">Previous</button>
+        <button type="button" id="lightbox-next">Next</button>
+      </div>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -76,6 +76,51 @@ in
       default = 2500000;
       description = "H.264 encoder bitrate in bits per second.";
     };
+
+    motion = {
+      maxEvents = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 48;
+        description = "Maximum number of motion events kept on disk.";
+      };
+
+      maxBytes = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 16777216;
+        description = "Maximum total size of stored motion JPEGs, in bytes.";
+      };
+
+      threshold = lib.mkOption {
+        type = lib.types.float;
+        default = 0.02;
+        description = "Fraction of analysis pixels that must change to count as motion.";
+      };
+
+      pixelFloor = lib.mkOption {
+        type = lib.types.ints.between 0 255;
+        default = 25;
+        description = "Per-pixel luma delta below which change is treated as noise.";
+      };
+
+      cooldownMs = lib.mkOption {
+        type = lib.types.ints.between 0 3600000;
+        default = 3000;
+        description = "Minimum time between motion events, in milliseconds.";
+      };
+
+      settleSecs = lib.mkOption {
+        type = lib.types.ints.between 0 60;
+        default = 5;
+        description = "Seconds to ignore motion after the stream becomes live.";
+      };
+
+      roi = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "0,0,0.6,1";
+        description = "Normalized analysis box x,y,w,h in 0-1. Null scores the full frame.";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -109,6 +154,14 @@ in
         MONITOR_FFMPEG_BIN = "${pkgs.ffmpeg}/bin/ffmpeg";
         MONITOR_FRAME_RATE = toString cfg.frameRate;
         MONITOR_REVISION = monitorRevision;
+        MONITOR_MOTION_DIR = "/var/lib/pi-camera-monitor/motion";
+        MONITOR_MOTION_MAX_EVENTS = toString cfg.motion.maxEvents;
+        MONITOR_MOTION_MAX_BYTES = toString cfg.motion.maxBytes;
+        MONITOR_MOTION_THRESHOLD = toString cfg.motion.threshold;
+        MONITOR_MOTION_PIXEL_FLOOR = toString cfg.motion.pixelFloor;
+        MONITOR_MOTION_COOLDOWN_MS = toString cfg.motion.cooldownMs;
+        MONITOR_MOTION_SETTLE_SECS = toString cfg.motion.settleSecs;
+        MONITOR_MOTION_ROI = lib.optionalString (cfg.motion.roi != null) cfg.motion.roi;
         MONITOR_CAPTURE_COMMAND = lib.concatStringsSep " " [
           "${pkgs.rpicam-apps}/bin/rpicam-vid"
           "--camera 0"
@@ -133,6 +186,8 @@ in
         RestartSec = "3s";
         RuntimeDirectory = "pi-camera-monitor";
         RuntimeDirectoryMode = "0700";
+        StateDirectory = "pi-camera-monitor";
+        StateDirectoryMode = "0700";
         UMask = "0077";
 
         NoNewPrivileges = true;

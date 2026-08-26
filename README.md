@@ -60,7 +60,10 @@ curl http://127.0.0.1:8080/health
 ```
 
 The rolling HLS playlist and segments live under `/run/pi-camera-monitor`, so
-they are bounded and do not write continuously to the SD card.
+they are bounded and do not write continuously to the SD card. Motion stills are
+kept in a capped ring under `/var/lib/pi-camera-monitor/motion` and shown below
+the live viewer. Raise `services.pi-camera-monitor.motion.threshold` or set
+`motion.roi` if trees or lighting chatter fill the gallery.
 
 The flake pins the same NixOS, hardware, and Home Manager revisions as the
 deployed Pi. This prevents an application change from unexpectedly rebuilding
@@ -113,3 +116,11 @@ The Rust service accepts these environment variables:
 - `MONITOR_WEB_DIR` (default `./web/dist`)
 - `MONITOR_CAPTURE_COMMAND` (defaults to 720p, 15 fps H.264 from `rpicam-vid`)
 - `MONITOR_FFMPEG_BIN` (default `ffmpeg`)
+- `MONITOR_MOTION_DIR` (default `/var/lib/pi-camera-monitor/motion`)
+- `MONITOR_MOTION_MAX_EVENTS` (default `48`)
+- `MONITOR_MOTION_MAX_BYTES` (default `16777216`)
+- `MONITOR_MOTION_THRESHOLD` (default `0.02`)
+- `MONITOR_MOTION_PIXEL_FLOOR` (default `25`)
+- `MONITOR_MOTION_COOLDOWN_MS` (default `3000`)
+- `MONITOR_MOTION_SETTLE_SECS` (default `5`)
+- `MONITOR_MOTION_ROI` (optional `x,y,w,h` in 0–1, for example `0,0,0.6,1`)

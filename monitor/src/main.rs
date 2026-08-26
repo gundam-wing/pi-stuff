@@ -1,13 +1,14 @@
+mod config;
+mod motion;
+
 use std::{
-    env,
-    net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     body::Body,
@@ -20,69 +21,22 @@ use serde::Serialize;
 use tokio::{
     fs,
     process::{Child, Command},
-    sync::{RwLock, watch},
+    sync::{Mutex, RwLock, watch},
     time::sleep,
 };
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{error, info, warn};
 
-const DEFAULT_CAPTURE_COMMAND: &str = "rpicam-vid --camera 0 --timeout 0 --width 1280 \
-    --height 720 --framerate 15 --codec h264 --inline --intra 15 --bitrate 2500000 \
-    --nopreview --output -";
-
-#[derive(Clone, Debug)]
-struct Config {
-    bind: SocketAddr,
-    hls_dir: PathBuf,
-    web_dir: PathBuf,
-    capture_command: Vec<String>,
-    ffmpeg_bin: String,
-    frame_rate: u32,
-    revision: String,
-}
-
-impl Config {
-    fn from_env() -> Result<Self> {
-        let bind = env::var("MONITOR_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:8080".into())
-            .parse()
-            .context("MONITOR_BIND must be an IP address and port")?;
-        let hls_dir = env::var_os("MONITOR_HLS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/run/pi-camera-monitor/hls"));
-        let web_dir = env::var_os("MONITOR_WEB_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("./web/dist"));
-        let capture_command = parse_command(
-            &env::var("MONITOR_CAPTURE_COMMAND").unwrap_or_else(|_| DEFAULT_CAPTURE_COMMAND.into()),
-        )?;
-        let ffmpeg_bin = env::var("MONITOR_FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
-        let frame_rate = env::var("MONITOR_FRAME_RATE")
-            .unwrap_or_else(|_| "15".into())
-            .parse()
-            .context("MONITOR_FRAME_RATE must be a positive integer")?;
-        if frame_rate == 0 {
-            bail!("MONITOR_FRAME_RATE must be greater than zero");
-        }
-        let revision = env::var("MONITOR_REVISION").unwrap_or_else(|_| "dev".into());
-
-        Ok(Self {
-            bind,
-            hls_dir,
-            web_dir,
-            capture_command,
-            ffmpeg_bin,
-            frame_rate,
-            revision,
-        })
-    }
-}
+use config::Config;
+use motion::{EventStore, MotionEvent, run_analyzer, valid_event_id, valid_frame_name};
 
 #[derive(Clone)]
 struct AppState {
     hls_dir: PathBuf,
     revision: String,
     stream: Arc<RwLock<StreamStatus>>,
+    motion: Arc<RwLock<MotionStatus>>,
+    store: Arc<EventStore>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -91,6 +45,14 @@ struct StatusResponse {
     #[serde(flatten)]
     stream: StreamStatus,
     revision: String,
+    motion: MotionStatus,
+    events: Vec<MotionEvent>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventsResponse {
+    events: Vec<MotionEvent>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -100,6 +62,14 @@ struct StreamStatus {
     message: Option<String>,
     started_at: Option<u64>,
     restarts: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MotionStatus {
+    score: f32,
+    threshold: f32,
+    detecting: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -132,24 +102,50 @@ async fn main() -> Result<()> {
     fs::create_dir_all(&config.hls_dir)
         .await
         .with_context(|| format!("create HLS directory {}", config.hls_dir.display()))?;
+    let store = Arc::new(
+        EventStore::open(
+            config.motion.dir.clone(),
+            config.motion.max_events,
+            config.motion.max_bytes,
+        )
+        .await?,
+    );
 
+    let stream = Arc::new(RwLock::new(StreamStatus::default()));
+    let motion = Arc::new(RwLock::new(MotionStatus {
+        score: 0.0,
+        threshold: config.motion.threshold,
+        detecting: false,
+    }));
     let state = AppState {
         hls_dir: config.hls_dir.clone(),
         revision: config.revision.clone(),
-        stream: Arc::new(RwLock::new(StreamStatus::default())),
+        stream: stream.clone(),
+        motion: motion.clone(),
+        store: store.clone(),
     };
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let supervisor = tokio::spawn(supervise_pipeline(
         config.clone(),
-        state.clone(),
-        shutdown_rx,
+        stream.clone(),
+        shutdown_rx.clone(),
+    ));
+    let analyzer = tokio::spawn(run_analyzer(
+        config.clone(),
+        stream,
+        motion,
+        store,
+        Arc::new(Mutex::new(())),
+        shutdown_tx.subscribe(),
     ));
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/status", get(status))
+        .route("/api/events", get(events))
         .route("/hls/stream.m3u8", get(playlist))
         .route("/hls/{segment}", get(segment))
+        .route("/events/{id}/{frame}", get(event_frame))
         .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -169,34 +165,58 @@ async fn main() -> Result<()> {
 
     let _ = shutdown_tx.send(true);
     supervisor.await.context("join pipeline supervisor")??;
+    analyzer.await.context("join motion analyzer")??;
     Ok(())
 }
 
-fn status_response(state: &AppState, stream: StreamStatus) -> StatusResponse {
+fn status_response(
+    state: &AppState,
+    stream: StreamStatus,
+    motion: MotionStatus,
+    events: Vec<MotionEvent>,
+) -> StatusResponse {
     StatusResponse {
         revision: state.revision.clone(),
         stream,
+        motion,
+        events,
     }
 }
 
 async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
-    Json(status_response(&state, state.stream.read().await.clone()))
+    Json(status_payload(&state).await)
+}
+
+async fn events(State(state): State<AppState>) -> Json<EventsResponse> {
+    Json(EventsResponse {
+        events: state.store.list().await,
+    })
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    let stream = state.stream.read().await.clone();
-    let code = if stream.phase == StreamPhase::Live {
+    let payload = status_payload(&state).await;
+    let code = if payload.stream.phase == StreamPhase::Live {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    (code, Json(status_response(&state, stream)))
+    (code, Json(payload))
+}
+
+async fn status_payload(state: &AppState) -> StatusResponse {
+    status_response(
+        state,
+        state.stream.read().await.clone(),
+        state.motion.read().await.clone(),
+        state.store.list().await,
+    )
 }
 
 async fn playlist(State(state): State<AppState>) -> Response {
     file_response(
         state.hls_dir.join("stream.m3u8"),
         "application/vnd.apple.mpegurl",
+        "no-store",
     )
     .await
 }
@@ -205,26 +225,44 @@ async fn segment(State(state): State<AppState>, AxumPath(segment): AxumPath<Stri
     if !valid_segment_name(&segment) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    file_response(state.hls_dir.join(segment), "video/mp2t").await
+    file_response(state.hls_dir.join(segment), "video/mp2t", "no-store").await
 }
 
-async fn file_response(path: PathBuf, content_type: &'static str) -> Response {
+async fn event_frame(
+    State(state): State<AppState>,
+    AxumPath((id, frame)): AxumPath<(String, String)>,
+) -> Response {
+    if !valid_event_id(&id) || !valid_frame_name(&frame) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(path) = state.store.frame_path(&id, &frame) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    file_response(path, "image/jpeg", "private, max-age=86400, immutable").await
+}
+
+async fn file_response(
+    path: PathBuf,
+    content_type: &'static str,
+    cache_control: &'static str,
+) -> Response {
     match fs::read(path).await {
         Ok(bytes) => {
             let mut response = Response::new(Body::from(bytes));
             response
                 .headers_mut()
                 .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(cache_control),
+            );
             response
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             StatusCode::NOT_FOUND.into_response()
         }
         Err(error) => {
-            error!(%error, "could not read HLS file");
+            error!(%error, "could not read requested file");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -243,7 +281,7 @@ fn valid_segment_name(name: &str) -> bool {
 
 async fn supervise_pipeline(
     config: Config,
-    state: AppState,
+    stream: Arc<RwLock<StreamStatus>>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let mut restarts = 0;
@@ -251,7 +289,7 @@ async fn supervise_pipeline(
     while !*shutdown.borrow() {
         clear_hls_dir(&config.hls_dir).await?;
         update_status(
-            &state,
+            &stream,
             StreamPhase::Starting,
             Some("Starting camera".into()),
             restarts,
@@ -263,7 +301,7 @@ async fn supervise_pipeline(
             Err(error) => {
                 error!(%error, "failed to start capture pipeline");
                 update_status(
-                    &state,
+                    &stream,
                     StreamPhase::Offline,
                     Some(error.to_string()),
                     restarts,
@@ -286,10 +324,10 @@ async fn supervise_pipeline(
                     }
                 }
                 _ = sleep(Duration::from_millis(500)) => {
-                    if state.stream.read().await.phase != StreamPhase::Live
+                    if stream.read().await.phase != StreamPhase::Live
                         && fs::metadata(config.hls_dir.join("stream.m3u8")).await.is_ok()
                     {
-                        update_status(&state, StreamPhase::Live, None, restarts).await;
+                        update_status(&stream, StreamPhase::Live, None, restarts).await;
                         info!("camera stream is live");
                     }
 
@@ -302,7 +340,7 @@ async fn supervise_pipeline(
                         warn!("{message}");
                         stop_children(&mut capture, &mut ffmpeg).await;
                         update_status(
-                            &state,
+                            &stream,
                             StreamPhase::Offline,
                             Some(message),
                             restarts,
@@ -405,7 +443,7 @@ async fn stop_children(capture: &mut Child, ffmpeg: &mut Child) {
 }
 
 async fn update_status(
-    state: &AppState,
+    stream: &Arc<RwLock<StreamStatus>>,
     phase: StreamPhase,
     message: Option<String>,
     restarts: u64,
@@ -417,14 +455,8 @@ async fn update_status(
                 .unwrap_or_default()
                 .as_secs()
         })
-        .or_else(|| {
-            state
-                .stream
-                .try_read()
-                .ok()
-                .and_then(|status| status.started_at)
-        });
-    *state.stream.write().await = StreamStatus {
+        .or_else(|| stream.try_read().ok().and_then(|status| status.started_at));
+    *stream.write().await = StreamStatus {
         phase,
         message,
         started_at,
@@ -437,14 +469,6 @@ async fn wait_or_shutdown(shutdown: &mut watch::Receiver<bool>, duration: Durati
         _ = sleep(duration) => false,
         result = shutdown.changed() => result.is_err() || *shutdown.borrow(),
     }
-}
-
-fn parse_command(value: &str) -> Result<Vec<String>> {
-    let command = shell_words::split(value).context("parse MONITOR_CAPTURE_COMMAND")?;
-    if command.is_empty() {
-        bail!("MONITOR_CAPTURE_COMMAND cannot be empty");
-    }
-    Ok(command)
 }
 
 async fn shutdown_signal() {
@@ -476,19 +500,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_quoted_capture_command() {
-        assert_eq!(
-            parse_command("capture --label 'front camera'").unwrap(),
-            ["capture", "--label", "front camera"]
-        );
-    }
-
-    #[test]
-    fn rejects_empty_capture_command() {
-        assert!(parse_command("  ").is_err());
-    }
-
-    #[test]
     fn accepts_only_generated_transport_stream_names() {
         assert!(valid_segment_name("segment-000042.ts"));
         assert!(!valid_segment_name("../secret.ts"));
@@ -497,14 +508,23 @@ mod tests {
     }
 
     #[test]
-    fn status_payload_includes_revision() {
+    fn status_payload_includes_revision_and_motion() {
         let payload = StatusResponse {
             stream: StreamStatus::default(),
             revision: "abc1234-dirty".into(),
+            motion: MotionStatus {
+                score: 0.04,
+                threshold: 0.02,
+                detecting: true,
+            },
+            events: Vec::new(),
         };
         let json = serde_json::to_value(payload).unwrap();
         assert_eq!(json["revision"], "abc1234-dirty");
         assert_eq!(json["phase"], "starting");
         assert_eq!(json["restarts"], 0);
+        assert!((json["motion"]["threshold"].as_f64().unwrap() - 0.02).abs() < 1e-6);
+        assert!(json["motion"]["detecting"].as_bool().unwrap());
+        assert_eq!(json["events"], serde_json::json!([]));
     }
 }
