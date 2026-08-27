@@ -47,8 +47,9 @@ cd ~/pi-stuff
 sudo nixos-rebuild switch --max-jobs 2 --cores 2 --flake .#myhostname
 ```
 
-The Wi-Fi connection keeps the Pi at `10.0.1.200` and is materialized under
-`/run` from the encrypted values. The Pi host SSH private key in
+The Wi-Fi SSID and password stay in `nixos/secrets/pi.yaml` and are rendered
+under `/run` at activation, so they never appear as Nix attribute names. The
+Pi stays at `10.0.1.200`. The host SSH private key in
 `/etc/ssh/ssh_host_ed25519_key` decrypts secrets during boot.
 
 The service starts automatically. Useful checks:

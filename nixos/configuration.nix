@@ -6,7 +6,6 @@
 }:
 let
   user = "guest";
-  wifiSsid = "YourNetworkName";
   interface = "wlan0";
   hostname = "pi-camera";
 in
@@ -16,13 +15,22 @@ in
     age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
     secrets = {
+      wifi_ssid = { };
       wifi_password = { };
       guest_password_hash.neededForUsers = true;
     };
 
-    templates."wireless.env" = {
-      content = "SSID_PASSWORD=${config.sops.placeholder.wifi_password}";
+    # Rendered at activation so the SSID is not a Nix attribute name.
+    templates."wireless.conf" = {
+      content = ''
+        network={
+          ssid="${config.sops.placeholder.wifi_ssid}"
+          psk="${config.sops.placeholder.wifi_password}"
+          key_mgmt=WPA-PSK WPA-EAP SAE FT-PSK FT-EAP FT-SAE
+        }
+      '';
       mode = "0400";
+      restartUnits = [ "wpa_supplicant-${interface}.service" ];
     };
   };
 
@@ -51,8 +59,10 @@ in
     hostName = hostname;
     wireless = {
       enable = true;
-      secretsFile = config.sops.templates."wireless.env".path;
-      networks."${wifiSsid}".pskRaw = "ext:SSID_PASSWORD";
+      # Keep generated config so extraConfigFiles are included; the network
+      # block itself comes from the sops template.
+      extraConfig = "# SSID and PSK are loaded from extraConfigFiles.";
+      extraConfigFiles = [ config.sops.templates."wireless.conf".path ];
       interfaces = [ interface ];
     };
     interfaces."${interface}".ipv4.addresses = [
