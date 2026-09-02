@@ -69,9 +69,11 @@ the live viewer. Raise `services.pi-camera-monitor.motion.threshold` or set
 
 The flake pins the same NixOS, hardware, and Home Manager revisions as the
 deployed Pi. This prevents an application change from unexpectedly rebuilding
-the kernel. Update those inputs deliberately. Native builds are limited to two
-jobs/two cores to preserve enough memory for SSH; a remote aarch64 builder or
-binary cache is the next step if builds become frequent.
+the kernel. Update those inputs deliberately. A small nixpkgs overlay rewrites
+Rust crate downloads to `static.crates.io` so builds work with the pinned
+fetcher. Native builds are limited to two jobs/two cores to preserve enough
+memory for SSH; a remote aarch64 builder or binary cache is the next step if
+builds become frequent.
 
 ## Connect through Tailscale
 

@@ -31,14 +31,7 @@ let
     pname = "pi-camera-monitor";
     version = "0.1.0";
     src = monitor-src;
-    cargoLock = {
-      lockFile = "${monitor-src}/Cargo.lock";
-      # crates.io's API download endpoint returns 403 to Nix's curl User-Agent;
-      # fetch from the CDN instead.
-      extraRegistries = {
-        "https://github.com/rust-lang/crates.io-index" = "https://static.crates.io/crates";
-      };
-    };
+    cargoLock.lockFile = "${monitor-src}/Cargo.lock";
 
     postInstall = ''
       mv "$out/bin/monitor" "$out/bin/pi-camera-monitor"
