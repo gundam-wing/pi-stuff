@@ -1,9 +1,11 @@
 mod config;
 mod motion;
+mod webrtc_hub;
 
 use std::{
+    io::{BufReader, Write},
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Child, Command, Stdio},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -15,28 +17,31 @@ use axum::{
     extract::{Path as AxumPath, State},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use serde::Serialize;
 use tokio::{
     fs,
-    process::{Child, Command},
     sync::{Mutex, RwLock, watch},
     time::sleep,
 };
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{error, info, warn};
 
+use bytes::Bytes;
 use config::Config;
 use motion::{EventStore, MotionEvent, run_analyzer, valid_event_id, valid_frame_name};
+use webrtc::media::io::h264_reader::H264Reader;
+use webrtc_hub::WebRtcHub;
 
 #[derive(Clone)]
-struct AppState {
+pub(crate) struct AppState {
     hls_dir: PathBuf,
     revision: String,
     stream: Arc<RwLock<StreamStatus>>,
     motion: Arc<RwLock<MotionStatus>>,
     store: Arc<EventStore>,
+    webrtc: WebRtcHub,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -117,17 +122,20 @@ async fn main() -> Result<()> {
         threshold: config.motion.threshold,
         detecting: false,
     }));
+    let webrtc_hub = WebRtcHub::new(config.frame_rate)?;
     let state = AppState {
         hls_dir: config.hls_dir.clone(),
         revision: config.revision.clone(),
         stream: stream.clone(),
         motion: motion.clone(),
         store: store.clone(),
+        webrtc: webrtc_hub.clone(),
     };
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let supervisor = tokio::spawn(supervise_pipeline(
         config.clone(),
         stream.clone(),
+        webrtc_hub.clone(),
         shutdown_rx.clone(),
     ));
     let analyzer = tokio::spawn(run_analyzer(
@@ -143,6 +151,8 @@ async fn main() -> Result<()> {
         .route("/health", get(health))
         .route("/api/status", get(status))
         .route("/api/events", get(events))
+        .route("/api/webrtc/status", get(webrtc_hub::webrtc_status))
+        .route("/api/webrtc/offer", post(webrtc_hub::webrtc_offer))
         .route("/hls/stream.m3u8", get(playlist))
         .route("/hls/{segment}", get(segment))
         .route("/events/{id}/{frame}", get(event_frame))
@@ -282,6 +292,7 @@ fn valid_segment_name(name: &str) -> bool {
 async fn supervise_pipeline(
     config: Config,
     stream: Arc<RwLock<StreamStatus>>,
+    webrtc_hub: WebRtcHub,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let mut restarts = 0;
@@ -296,7 +307,8 @@ async fn supervise_pipeline(
         )
         .await;
 
-        let (mut capture, mut ffmpeg) = match spawn_pipeline(&config) {
+        let (mut capture, mut ffmpeg, fanout) = match spawn_pipeline(&config, webrtc_hub.clone()).await
+        {
             Ok(children) => children,
             Err(error) => {
                 error!(%error, "failed to start capture pipeline");
@@ -333,7 +345,12 @@ async fn supervise_pipeline(
 
                     let capture_exit = capture.try_wait().context("check camera process")?;
                     let ffmpeg_exit = ffmpeg.try_wait().context("check ffmpeg process")?;
-                    if capture_exit.is_some() || ffmpeg_exit.is_some() {
+                    if capture_exit.is_some() || ffmpeg_exit.is_some() || fanout.is_finished() {
+                        if fanout.is_finished() {
+                            let _ = fanout.await;
+                        } else {
+                            fanout.abort();
+                        }
                         let message = format!(
                             "Pipeline exited (camera: {capture_exit:?}, ffmpeg: {ffmpeg_exit:?})"
                         );
@@ -361,23 +378,28 @@ async fn supervise_pipeline(
     Ok(())
 }
 
-fn spawn_pipeline(config: &Config) -> Result<(Child, Child)> {
+async fn spawn_pipeline(
+    config: &Config,
+    webrtc_hub: WebRtcHub,
+) -> Result<(Child, Child, tokio::task::JoinHandle<Result<()>>)> {
     let (program, args) = config
         .capture_command
         .split_first()
         .context("capture command is empty")?;
-    let (camera_output, camera_input) = os_pipe::pipe().context("create camera-to-ffmpeg pipe")?;
-    let capture = Command::new(program)
+    let mut capture = Command::new(program)
         .args(args)
-        .stdout(Stdio::from(camera_input))
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("start camera command {program}"))?;
+    let camera_stdout = capture
+        .stdout
+        .take()
+        .context("capture stdout pipe missing")?;
     let playlist = config.hls_dir.join("stream.m3u8");
     let segment_pattern = config.hls_dir.join("segment-%06d.ts");
 
-    let ffmpeg = Command::new(&config.ffmpeg_bin)
+    let mut ffmpeg = Command::new(&config.ffmpeg_bin)
         .args([
             "-hide_banner",
             "-loglevel",
@@ -408,14 +430,45 @@ fn spawn_pipeline(config: &Config) -> Result<(Child, Child)> {
         ])
         .arg(segment_pattern)
         .arg(playlist)
-        .stdin(Stdio::from(camera_output))
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
-        .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("start HLS muxer {}", config.ffmpeg_bin))?;
+    let ffmpeg_stdin = ffmpeg
+        .stdin
+        .take()
+        .context("ffmpeg stdin pipe missing")?;
 
-    Ok((capture, ffmpeg))
+    let fanout = tokio::task::spawn_blocking(move || fanout_h264(camera_stdout, ffmpeg_stdin, webrtc_hub));
+
+    Ok((capture, ffmpeg, fanout))
+}
+
+fn fanout_h264(
+    camera_stdout: impl std::io::Read,
+    mut ffmpeg_stdin: impl Write,
+    webrtc_hub: WebRtcHub,
+) -> Result<()> {
+    let mut reader = BufReader::new(camera_stdout);
+    let mut h264 = H264Reader::new(&mut reader, 1_048_576);
+
+    loop {
+        match h264.next_nal() {
+            Ok(nal) => {
+                ffmpeg_stdin.write_all(&nal.data)?;
+                webrtc_hub.publish_nal(Bytes::copy_from_slice(&nal.data));
+            }
+            Err(error) => {
+                if error.to_string().contains("EOF") {
+                    break;
+                }
+                return Err(error.into());
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn clear_hls_dir(directory: &Path) -> Result<()> {
@@ -436,10 +489,10 @@ async fn clear_hls_dir(directory: &Path) -> Result<()> {
 }
 
 async fn stop_children(capture: &mut Child, ffmpeg: &mut Child) {
-    let _ = capture.kill().await;
-    let _ = ffmpeg.kill().await;
-    let _ = capture.wait().await;
-    let _ = ffmpeg.wait().await;
+    let _ = capture.kill();
+    let _ = ffmpeg.kill();
+    let _ = capture.wait();
+    let _ = ffmpeg.wait();
 }
 
 async fn update_status(

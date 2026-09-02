@@ -42,7 +42,7 @@ video {
     max(1.25rem, env(safe-area-inset-bottom))
     max(1rem, env(safe-area-inset-left));
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   gap: 1.25rem;
 }
 
@@ -67,6 +67,28 @@ h1 {
   font-size: clamp(1.65rem, 5vw, 2.5rem);
   font-weight: 580;
   letter-spacing: -0.04em;
+}
+
+.format-nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.format-nav a {
+  padding: 0.45rem 0.85rem;
+  border: 1px solid #2b3731;
+  border-radius: 999px;
+  color: #b8c4bd;
+  background: rgba(24, 31, 27, 0.82);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.format-nav a[aria-current="page"] {
+  color: #111a15;
+  background: #90d6aa;
+  border-color: #90d6aa;
 }
 
 .events h2 {

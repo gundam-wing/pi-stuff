@@ -1,8 +1,9 @@
 # Raspberry Pi camera monitor
 
-A private, live HLS viewer for a Raspberry Pi 4 and Camera Module 3 running
+A private, live viewer for a Raspberry Pi 4 and Camera Module 3 running
 NixOS. The monitor uses `rpicam-vid` for H.264 capture, FFmpeg for HLS muxing,
-a Rust service for supervision and HTTP, and a TypeScript web viewer.
+a Rust service for supervision and HTTP, and a TypeScript web viewer. The same
+H.264 feed is also available over WebRTC for lower-latency comparison.
 
 ## Deploy
 
@@ -81,7 +82,8 @@ web application under normal operation. No router ports need to be opened.
 2. Open the displayed URL once and approve the Pi.
 3. In the Tailscale admin console, disable key expiry for this always-on Pi.
 4. Install Tailscale on the phone and sign in to the same account.
-5. With Tailscale connected, open `http://pi-camera:8080`.
+5. With Tailscale connected, open `http://pi-camera:8080` for HLS or
+   `http://pi-camera:8080/webrtc.html` for WebRTC.
 
 From the Mac, connect to the Pi with:
 
@@ -125,3 +127,9 @@ The Rust service accepts these environment variables:
 - `MONITOR_MOTION_COOLDOWN_MS` (default `3000`)
 - `MONITOR_MOTION_SETTLE_SECS` (default `5`)
 - `MONITOR_MOTION_ROI` (optional `x,y,w,h` in 0–1, for example `0,0,0.6,1`)
+
+Streaming endpoints:
+
+- HLS playlist: `GET /hls/stream.m3u8`
+- WebRTC signaling: `POST /api/webrtc/offer` with `{ "type": "offer", "sdp": "..." }`
+- WebRTC status: `GET /api/webrtc/status`
