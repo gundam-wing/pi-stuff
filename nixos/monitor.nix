@@ -38,7 +38,7 @@ let
     '';
 
     meta = {
-      description = "Supervised HLS camera service for Raspberry Pi";
+      description = "Supervised HLS and WebRTC camera service for Raspberry Pi";
       mainProgram = "pi-camera-monitor";
     };
   };
@@ -139,7 +139,7 @@ in
     };
 
     systemd.services.pi-camera-monitor = {
-      description = "Raspberry Pi camera HLS monitor";
+      description = "Raspberry Pi camera HLS and WebRTC monitor";
       wantedBy = [ "multi-user.target" ];
       after = [
         "network.target"

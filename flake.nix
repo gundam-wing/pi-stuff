@@ -62,6 +62,7 @@
                   rpicam-apps = final.callPackage ./nixos/rpicam-apps.nix { };
                 }
               )
+              (import ./nixos/overlays/crates-io-static.nix)
             ];
           }
           ./nixos/configuration.nix

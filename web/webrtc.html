@@ -4,15 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#101412" />
-    <meta name="description" content="Private live view from the Raspberry Pi camera" />
-    <title>Pi Camera</title>
+    <meta name="description" content="Private WebRTC live view from the Raspberry Pi camera" />
+    <title>Pi Camera · WebRTC</title>
   </head>
   <body>
     <main class="app">
       <header>
         <div>
           <p class="eyebrow">PRIVATE CAMERA</p>
-          <h1>HLS monitor</h1>
+          <h1>WebRTC monitor</h1>
         </div>
         <div class="status" id="status" data-phase="starting">
           <span class="status-dot"></span>
@@ -21,8 +21,8 @@
       </header>
 
       <nav class="format-nav" aria-label="Streaming format">
-        <a href="/" aria-current="page">HLS</a>
-        <a href="/webrtc.html">WebRTC</a>
+        <a href="/">HLS</a>
+        <a href="/webrtc.html" aria-current="page">WebRTC</a>
       </nav>
 
       <section class="viewer" aria-label="Live camera">
@@ -46,6 +46,7 @@
       <footer>
         <span id="connection">Checking stream</span>
         <span class="meta">
+          <span id="latency"></span>
           <span id="restarts"></span>
           <span id="revision"></span>
         </span>
@@ -62,6 +63,6 @@
         <button type="button" id="lightbox-next">Next</button>
       </div>
     </dialog>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/webrtc.ts"></script>
   </body>
 </html>
