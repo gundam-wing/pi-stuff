@@ -102,11 +102,10 @@ in
 
   security.sudo.wheelNeedsPassword = true;
 
-  services.xserver = {
-    enable = true;
-    displayManager.lightdm.enable = true;
-    desktopManager.xfce.enable = true;
-  };
+  # Headless camera host. LightDM cannot start X without HDMI, and a failed
+  # display-manager unit makes nixos-rebuild switch exit 4 even when the
+  # camera service is healthy.
+  services.xserver.enable = false;
 
   services.openssh = {
     enable = true;

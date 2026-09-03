@@ -3,7 +3,7 @@ mod motion;
 mod webrtc_hub;
 
 use std::{
-    io::{BufReader, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Arc,
@@ -445,18 +445,39 @@ async fn spawn_pipeline(
     Ok((capture, ffmpeg, fanout))
 }
 
+/// Copies camera bytes to `sink` as they are read so FFmpeg still sees the
+/// original Annex-B stream. `H264Reader` strips start codes, which FFmpeg's
+/// `-f h264` demuxer cannot parse.
+struct CopyOnRead<R, W> {
+    inner: R,
+    sink: W,
+}
+
+impl<R: Read, W: Write> Read for CopyOnRead<R, W> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            self.sink.write_all(&buf[..n])?;
+            self.sink.flush()?;
+        }
+        Ok(n)
+    }
+}
+
 fn fanout_h264(
-    camera_stdout: impl std::io::Read,
-    mut ffmpeg_stdin: impl Write,
+    camera_stdout: impl Read,
+    ffmpeg_stdin: impl Write,
     webrtc_hub: WebRtcHub,
 ) -> Result<()> {
-    let mut reader = BufReader::new(camera_stdout);
+    let mut reader = CopyOnRead {
+        inner: camera_stdout,
+        sink: ffmpeg_stdin,
+    };
     let mut h264 = H264Reader::new(&mut reader, 1_048_576);
 
     loop {
         match h264.next_nal() {
             Ok(nal) => {
-                ffmpeg_stdin.write_all(&nal.data)?;
                 webrtc_hub.publish_nal(Bytes::copy_from_slice(&nal.data));
             }
             Err(error) => {
@@ -551,6 +572,27 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_on_read_forwards_exact_bytes() {
+        let input = [0u8, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68];
+        let mut sink = Vec::new();
+        let mut reader = CopyOnRead {
+            inner: &input[..],
+            sink: &mut sink,
+        };
+        let mut buf = [0u8; 5];
+        let mut copied = 0;
+        loop {
+            let n = reader.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            copied += n;
+        }
+        assert_eq!(copied, input.len());
+        assert_eq!(sink, input);
+    }
 
     #[test]
     fn accepts_only_generated_transport_stream_names() {
