@@ -40,11 +40,26 @@ over SSH. Sudo on the Pi prompts for the `guest` password. Copy without
 switching with `./scripts/deploy.sh --sync-only`. Override the SSH target with
 `PI_HOST=guest@pi-camera` when Tailscale hostname verification is set up.
 
+For a deliberate nixpkgs bump (kernel rebuild, hours on this Pi), sync and start
+the switch as a detachable systemd oneshot instead:
+
+```sh
+./scripts/deploy.sh --overnight
+```
+
+Enter the `guest` sudo password once, then disconnect. Watch progress with:
+
+```sh
+ssh guest@10.0.1.200 'sudo journalctl -u nixos-rebuild-overnight -f'
+# or: ssh guest@10.0.1.200 'sudo tail -f /var/log/nixos-rebuild-overnight.log'
+```
+
 If you are already on the Pi:
 
 ```sh
 cd ~/pi-stuff
 sudo nixos-rebuild switch --max-jobs 2 --cores 2 --flake .#myhostname
+# or: sudo ./scripts/overnight-rebuild.sh
 ```
 
 The Wi-Fi SSID and password stay in `nixos/secrets/pi.yaml` and are rendered
@@ -68,9 +83,12 @@ the live viewer. Raise `services.pi-camera-monitor.motion.threshold` or set
 
 The flake pins the same NixOS, hardware, and Home Manager revisions as the
 deployed Pi. This prevents an application change from unexpectedly rebuilding
-the kernel. Update those inputs deliberately. Native builds are limited to two
-jobs/two cores to preserve enough memory for SSH; a remote aarch64 builder or
-binary cache is the next step if builds become frequent.
+the kernel. Update those inputs deliberately (and prefer
+`./scripts/deploy.sh --overnight` when you do). The current nixpkgs pin is past
+the 2026 crates.io User-Agent / `static.crates.io` cargo-fetch fix, so newer
+Rust dependencies can vendor again. Native builds are limited to two jobs/two
+cores to preserve enough memory for SSH; a remote aarch64 builder or binary
+cache is the next step if builds become frequent.
 
 ## Connect through Tailscale
 
