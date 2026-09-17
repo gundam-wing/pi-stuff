@@ -8,10 +8,13 @@ set -euo pipefail
 #   ./scripts/deploy.sh                # rsync, then nixos-rebuild switch
 #   ./scripts/deploy.sh --sync-only    # rsync only
 #   ./scripts/deploy.sh --overnight    # rsync, then start rebuild via systemd-run
+#   ./scripts/deploy.sh --status       # snapshot overnight rebuild progress on the Pi
 #
 # Overnight mode is for deliberate nixpkgs/kernel bumps that can run for hours
 # on the capacity-constrained Pi. It prompts once for sudo, then continues as a
-# oneshot systemd unit so the SSH client can disconnect safely.
+# oneshot systemd unit so the SSH client can disconnect safely. Logs include
+# --print-build-logs (-L) plus a 2-minute heartbeat so quiet compiles still
+# show life. Use --status / scripts/rebuild-status.sh to inspect progress.
 #
 # Optional environment:
 #   PI_HOST       SSH target (default: guest@10.0.1.200)
@@ -36,15 +39,29 @@ case "${1:-}" in
   "") ;;
   --sync-only) mode=sync-only ;;
   --overnight) mode=overnight ;;
+  --status) mode=status ;;
   -h|--help)
-    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
   *)
-    echo "usage: $0 [--sync-only|--overnight]" >&2
+    echo "usage: $0 [--sync-only|--overnight|--status]" >&2
     exit 2
     ;;
 esac
+
+if [[ "$mode" == "status" ]]; then
+  # Push only the status helper so this works against an already-running
+  # overnight rebuild without a full tree sync.
+  ssh "$host" "mkdir -p $(printf '%q' "$remote_dir/scripts")"
+  rsync -az "$root/scripts/rebuild-status.sh" "$host:$remote_dir/scripts/rebuild-status.sh"
+  ssh -t "$host" \
+    "sudo env \
+      REBUILD_LOG=$(printf '%q' "$rebuild_log") \
+      SYSTEMD_UNIT=$(printf '%q' "$systemd_unit") \
+      $(printf '%q' "$remote_dir/scripts/rebuild-status.sh")"
+  exit 0
+fi
 
 cd "$root"
 

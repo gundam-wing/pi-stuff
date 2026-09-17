@@ -47,12 +47,19 @@ the switch as a detachable systemd oneshot instead:
 ./scripts/deploy.sh --overnight
 ```
 
-Enter the `guest` sudo password once, then disconnect. Watch progress with:
+Enter the `guest` sudo password once, then disconnect. Check progress with:
 
 ```sh
-ssh guest@10.0.1.200 'sudo journalctl -u nixos-rebuild-overnight -f'
-# or: ssh guest@10.0.1.200 'sudo tail -f /var/log/nixos-rebuild-overnight.log'
+./scripts/deploy.sh --status
+# or on the Pi:
+sudo ~/pi-stuff/scripts/rebuild-status.sh
+sudo ~/pi-stuff/scripts/rebuild-status.sh --follow   # refresh every 30s
+sudo tail -f /var/log/nixos-rebuild-overnight.log
 ```
+
+The overnight log includes `nixos-rebuild -L` build output and a heartbeat every
+two minutes (load average + active compilers) so a quiet kernel compile still
+shows the job is alive.
 
 If you are already on the Pi:
 
