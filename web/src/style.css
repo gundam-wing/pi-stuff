@@ -295,8 +295,6 @@ button[hidden] {
   aspect-ratio: 16 / 9;
   object-fit: contain;
   touch-action: manipulation;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .lightbox-close {
