@@ -16,6 +16,8 @@ html,
 body {
   min-height: 100%;
   margin: 0;
+  /* Disable double-tap zoom; pinch-zoom still works. */
+  touch-action: manipulation;
 }
 
 body {
@@ -292,6 +294,9 @@ button[hidden] {
   background: #080b09;
   aspect-ratio: 16 / 9;
   object-fit: contain;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .lightbox-close {

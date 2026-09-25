@@ -258,13 +258,56 @@ retry.addEventListener("click", () => {
   void connectPlayer();
   void pollStatus();
 });
-lightboxPrev.addEventListener("click", () => stepLightbox(-1));
-lightboxNext.addEventListener("click", () => stepLightbox(1));
+/** Fire on touch without allowing iOS double-tap zoom; click covers mouse/trackpad. */
+function bindPress(button: HTMLButtonElement, action: () => void): void {
+  let touchedAt = 0;
+  button.addEventListener(
+    "touchend",
+    (event) => {
+      if (button.disabled || event.changedTouches.length !== 1) {
+        return;
+      }
+      event.preventDefault();
+      touchedAt = performance.now();
+      action();
+    },
+    { passive: false },
+  );
+  button.addEventListener("click", () => {
+    if (performance.now() - touchedAt < 500) {
+      return;
+    }
+    action();
+  });
+}
+
+bindPress(lightboxPrev, () => stepLightbox(-1));
+bindPress(lightboxNext, () => stepLightbox(1));
 lightbox.addEventListener("click", (event) => {
   if (event.target === lightbox) {
     lightbox.close();
   }
 });
+// Extra guard: rapid taps on the image/dialog (not a control) still zoom on some WebKits.
+let lastLightboxTouchEnd = 0;
+lightbox.addEventListener(
+  "touchend",
+  (event) => {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, a, input, textarea, select")
+    ) {
+      return;
+    }
+    const now = performance.now();
+    if (now - lastLightboxTouchEnd <= 350) {
+      event.preventDefault();
+    }
+    lastLightboxTouchEnd = now;
+  },
+  { passive: false },
+);
 document.addEventListener("keydown", (event) => {
   if (!lightbox.open) {
     return;
