@@ -308,7 +308,7 @@ async fn supervise_pipeline(
                 )
                 .await;
                 restarts += 1;
-                if wait_or_shutdown(&mut shutdown, Duration::from_secs(2)).await {
+                if wait_or_shutdown(&mut shutdown, restart_backoff(restarts)).await {
                     break;
                 }
                 continue;
@@ -353,12 +353,18 @@ async fn supervise_pipeline(
             }
         }
 
-        if wait_or_shutdown(&mut shutdown, Duration::from_secs(2)).await {
+        if wait_or_shutdown(&mut shutdown, restart_backoff(restarts)).await {
             break;
         }
     }
 
     Ok(())
+}
+
+fn restart_backoff(restarts: u64) -> Duration {
+    // Give the IMX708 regulator and ISP time to settle after a failed open or
+    // a graceful stop before trying again.
+    Duration::from_secs(5u64.saturating_add(restarts.min(5)))
 }
 
 fn spawn_pipeline(config: &Config) -> Result<(Child, Child)> {
@@ -436,10 +442,42 @@ async fn clear_hls_dir(directory: &Path) -> Result<()> {
 }
 
 async fn stop_children(capture: &mut Child, ffmpeg: &mut Child) {
-    let _ = capture.kill().await;
-    let _ = ffmpeg.kill().await;
-    let _ = capture.wait().await;
-    let _ = ffmpeg.wait().await;
+    // Prefer SIGTERM so libcamera can release the sensor/ISP cleanly. Hard
+    // kills are a common cause of the next open failing until reboot.
+    terminate_then_kill(capture, Duration::from_secs(3)).await;
+    terminate_then_kill(ffmpeg, Duration::from_secs(2)).await;
+}
+
+async fn terminate_then_kill(child: &mut Child, grace: Duration) {
+    match child.try_wait() {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(_) => {}
+    }
+
+    send_sigterm(child);
+    match tokio::time::timeout(grace, child.wait()).await {
+        Ok(_) => {}
+        Err(_) => {
+            warn!("child did not exit after SIGTERM; sending SIGKILL");
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+    }
+}
+
+fn send_sigterm(child: &Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        unsafe {
+            let _ = libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child;
+    }
 }
 
 async fn update_status(
@@ -505,6 +543,13 @@ mod tests {
         assert!(!valid_segment_name("../secret.ts"));
         assert!(!valid_segment_name("segment-current.m3u8"));
         assert!(!valid_segment_name("segment-.ts"));
+    }
+
+    #[test]
+    fn restart_backoff_grows_then_caps() {
+        assert_eq!(restart_backoff(1), Duration::from_secs(6));
+        assert_eq!(restart_backoff(5), Duration::from_secs(10));
+        assert_eq!(restart_backoff(99), Duration::from_secs(10));
     }
 
     #[test]

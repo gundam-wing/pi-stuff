@@ -141,10 +141,14 @@ in
     systemd.services.pi-camera-monitor = {
       description = "Raspberry Pi camera HLS monitor";
       wantedBy = [ "multi-user.target" ];
+      # Claim CMA before LightDM/fkms fragment it, and wait for media/dma_heap
+      # nodes so rpicam-vid does not race a half-probed IMX708 at power-on.
       after = [
+        "local-fs.target"
         "network.target"
         "tailscaled.service"
       ];
+      before = [ "display-manager.service" ];
       wants = [ "tailscaled.service" ];
 
       environment = {
@@ -179,11 +183,26 @@ in
       };
 
       serviceConfig = {
+        ExecStartPre = pkgs.writeShellScript "wait-for-camera" ''
+          set -eu
+          for _ in $(seq 1 60); do
+            if [ -e /dev/dma_heap/vidbuf_cached ] || [ -e /dev/dma_heap/reserved ]; then
+              for node in /dev/media*; do
+                if [ -e "$node" ]; then
+                  exit 0
+                fi
+              done
+            fi
+            sleep 0.5
+          done
+          echo "timed out waiting for camera media/dma_heap devices" >&2
+          exit 1
+        '';
         ExecStart = lib.getExe monitorService;
         User = "pi-camera-monitor";
         Group = "pi-camera-monitor";
         Restart = "on-failure";
-        RestartSec = "3s";
+        RestartSec = "5s";
         RuntimeDirectory = "pi-camera-monitor";
         RuntimeDirectoryMode = "0700";
         StateDirectory = "pi-camera-monitor";

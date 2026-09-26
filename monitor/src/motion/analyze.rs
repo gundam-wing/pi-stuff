@@ -281,6 +281,18 @@ async fn capture_burst(config: &Config) -> Result<Vec<Vec<u8>>> {
         .await
         .with_context(|| format!("create {}", tmp.display()))?;
 
+    // Copy out of the live HLS directory first: ffmpeg may delete the segment
+    // via delete_segments between playlist parse and still extract.
+    let segment_copy = tmp.join("source.ts");
+    fs::copy(&segment, &segment_copy)
+        .await
+        .with_context(|| {
+            format!(
+                "copy HLS segment {} for still burst",
+                segment.display()
+            )
+        })?;
+
     let filter = format!(
         "select='eq(n,0)+eq(n,3)+eq(n,6)',scale={}:{}",
         config.motion.burst_width, config.motion.burst_height
@@ -288,7 +300,7 @@ async fn capture_burst(config: &Config) -> Result<Vec<Vec<u8>>> {
     let output = tmp.join("%02d.jpg");
     let status = Command::new(&config.ffmpeg_bin)
         .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
-        .arg(&segment)
+        .arg(&segment_copy)
         .args(["-an", "-vf"])
         .arg(&filter)
         .args([

@@ -14,16 +14,23 @@ let
       trap 'rm -rf "$work_dir"' EXIT
 
       # Give automatic exposure and white balance a few frames to settle.
+      # libcamera indexes the single CAM1 Module 3 as camera 0; "cam1" in the
+      # device tree is the connector name, not the libcamera index.
       cam \
-        --camera 1 \
+        --camera 0 \
         --capture=15 \
         --stream role=viewfinder,width=1280,height=720,pixelformat=BGR888 \
         --file="$work_dir/frame-#.ppm"
 
+      shopt -s nullglob
       last_frame=
       for frame in "$work_dir"/frame-*.ppm; do
         last_frame="$frame"
       done
+      if [[ -z "$last_frame" ]]; then
+        echo "camera capture produced no frames" >&2
+        exit 1
+      fi
 
       magick "$last_frame" "$output"
       printf 'Saved %s\n' "$output"
