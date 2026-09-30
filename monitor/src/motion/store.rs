@@ -240,7 +240,7 @@ async fn reconcile(dir: &Path, events: Vec<MotionEvent>) -> Result<Vec<MotionEve
             score: 0.0,
         });
     }
-    known.sort_by(|left, right| right.captured_at.cmp(&left.captured_at));
+    known.sort_by_key(|event| std::cmp::Reverse(event.captured_at));
     Ok(known)
 }
 

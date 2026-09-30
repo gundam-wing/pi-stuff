@@ -9,8 +9,9 @@ use anyhow::{Context, Result, bail};
 use tokio::{
     fs,
     io::AsyncReadExt,
-    process::{Child, ChildStdout, Command},
+    process::Command,
     sync::{Mutex, RwLock, watch},
+    time::timeout,
 };
 use tracing::{info, warn};
 
@@ -23,6 +24,7 @@ struct Detector {
     previous: Option<Vec<u8>>,
     in_motion: bool,
     cooldown_until: Instant,
+    last_segment: Option<PathBuf>,
 }
 
 impl Detector {
@@ -31,70 +33,14 @@ impl Detector {
             previous: None,
             in_motion: false,
             cooldown_until: Instant::now(),
+            last_segment: None,
         }
     }
 
     fn reset(&mut self) {
         self.previous = None;
         self.in_motion = false;
-    }
-}
-
-struct AnalyzeSession {
-    child: Child,
-    stdout: ChildStdout,
-    frame: Vec<u8>,
-}
-
-impl AnalyzeSession {
-    fn spawn(config: &Config) -> Result<Self> {
-        let playlist = config.hls_dir.join("stream.m3u8");
-        let filter = format!(
-            "fps={},scale={}:{}:flags=fast_bilinear,format=gray",
-            config.motion.analysis_fps, config.motion.analysis_width, config.motion.analysis_height
-        );
-        let mut child = Command::new(&config.ffmpeg_bin)
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "warning",
-                "-nostdin",
-                "-live_start_index",
-                "-2",
-                "-i",
-            ])
-            .arg(&playlist)
-            .args(["-an", "-vf"])
-            .arg(&filter)
-            .args(["-pix_fmt", "gray", "-f", "rawvideo", "pipe:1"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("start motion analyzer {}", config.ffmpeg_bin))?;
-        let stdout = child
-            .stdout
-            .take()
-            .context("motion analyzer stdout is missing")?;
-        Ok(Self {
-            child,
-            stdout,
-            frame: vec![0; config.motion.frame_bytes()],
-        })
-    }
-
-    async fn read_frame(&mut self) -> Result<&[u8]> {
-        self.stdout
-            .read_exact(&mut self.frame)
-            .await
-            .context("read motion analysis frame")?;
-        Ok(&self.frame)
-    }
-
-    async fn stop(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+        self.last_segment = None;
     }
 }
 
@@ -107,21 +53,17 @@ pub(crate) async fn run_analyzer(
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let mut detector = Detector::new();
-    let mut session: Option<AnalyzeSession> = None;
+    let sample_period = Duration::from_millis(1000 / u64::from(config.motion.analysis_fps.max(1)));
+    let mut announced = false;
 
     loop {
         if *shutdown.borrow() {
-            if let Some(mut session) = session.take() {
-                session.stop().await;
-            }
             return Ok(());
         }
 
         if !should_detect(&config, &stream).await {
-            if let Some(mut session) = session.take() {
-                session.stop().await;
-            }
             detector.reset();
+            announced = false;
             update_motion(&motion, 0.0, false).await;
             if wait_or_shutdown(&mut shutdown, Duration::from_millis(500)).await {
                 return Ok(());
@@ -129,59 +71,37 @@ pub(crate) async fn run_analyzer(
             continue;
         }
 
-        if session.is_none() {
-            match AnalyzeSession::spawn(&config) {
-                Ok(started) => {
-                    info!("motion analyzer started");
-                    session = Some(started);
-                    update_motion(&motion, 0.0, true).await;
+        if !announced {
+            info!("motion analyzer started");
+            announced = true;
+            update_motion(&motion, 0.0, true).await;
+        }
+
+        match sample_analysis_frame(&config, &mut detector).await {
+            Ok(None) => {
+                // No new complete segment yet; keep the last published score.
+            }
+            Ok(Some(frame)) => {
+                if let Err(error) = on_frame(
+                    &config,
+                    &mut detector,
+                    &frame,
+                    &motion,
+                    &store,
+                    &burst_lock,
+                )
+                .await
+                {
+                    warn!(%error, "motion capture failed");
                 }
-                Err(error) => {
-                    warn!(%error, "could not start motion analyzer");
-                    update_motion(&motion, 0.0, false).await;
-                    if wait_or_shutdown(&mut shutdown, Duration::from_secs(1)).await {
-                        return Ok(());
-                    }
-                    continue;
-                }
+            }
+            Err(error) => {
+                warn!(%error, "motion sample failed");
             }
         }
 
-        let Some(current) = session.as_mut() else {
-            continue;
-        };
-
-        tokio::select! {
-            result = shutdown.changed() => {
-                if result.is_err() || *shutdown.borrow() {
-                    current.stop().await;
-                    return Ok(());
-                }
-            }
-            result = current.read_frame() => {
-                match result {
-                    Ok(frame) => {
-                        if let Err(error) = on_frame(
-                            &config,
-                            &mut detector,
-                            frame,
-                            &motion,
-                            &store,
-                            &burst_lock,
-                        )
-                        .await
-                        {
-                            warn!(%error, "motion capture failed");
-                        }
-                    }
-                    Err(error) => {
-                        warn!(%error, "motion analyzer stopped");
-                        current.stop().await;
-                        session = None;
-                        detector.reset();
-                    }
-                }
-            }
+        if wait_or_shutdown(&mut shutdown, sample_period).await {
+            return Ok(());
         }
     }
 }
@@ -264,6 +184,83 @@ async fn update_motion(motion: &Arc<RwLock<MotionStatus>>, score: f32, detecting
     let mut status = motion.write().await;
     status.score = score;
     status.detecting = detecting;
+}
+
+/// Pull one gray analysis frame from the newest complete HLS segment.
+///
+/// The previous long-lived `ffmpeg -i stream.m3u8` reader regularly stalled on
+/// live playlists that use `delete_segments`, leaving motion score stuck at 0.
+/// Sampling a finished `.ts` file avoids that hang.
+async fn sample_analysis_frame(
+    config: &Config,
+    detector: &mut Detector,
+) -> Result<Option<Vec<u8>>> {
+    let Some(segment) = newest_complete_segment(&config.hls_dir).await? else {
+        return Ok(None);
+    };
+    if detector.last_segment.as_ref() == Some(&segment) {
+        return Ok(None);
+    }
+
+    let tmp = config
+        .motion
+        .dir
+        .join(format!(".analyze-{}", std::process::id()));
+    if tmp.exists() {
+        fs::remove_dir_all(&tmp).await.ok();
+    }
+    fs::create_dir_all(&tmp)
+        .await
+        .with_context(|| format!("create {}", tmp.display()))?;
+    let segment_copy = tmp.join("source.ts");
+    let copy_result = fs::copy(&segment, &segment_copy).await;
+    if let Err(error) = copy_result {
+        let _ = fs::remove_dir_all(&tmp).await;
+        return Err(error).with_context(|| {
+            format!(
+                "copy HLS segment {} for motion analysis",
+                segment.display()
+            )
+        });
+    }
+
+    let filter = format!(
+        "scale={}:{}:flags=fast_bilinear,format=gray",
+        config.motion.analysis_width, config.motion.analysis_height
+    );
+    let mut child = Command::new(&config.ffmpeg_bin)
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
+        .arg(&segment_copy)
+        .args(["-an", "-vf"])
+        .arg(&filter)
+        .args(["-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+        .context("start motion sample ffmpeg")?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .context("motion sample stdout is missing")?;
+    let mut frame = vec![0; config.motion.frame_bytes()];
+    let read = timeout(Duration::from_secs(3), stdout.read_exact(&mut frame)).await;
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    let _ = fs::remove_dir_all(&tmp).await;
+
+    match read {
+        Ok(Ok(_)) => {
+            detector.last_segment = Some(segment);
+            Ok(Some(frame))
+        }
+        Ok(Err(error)) => Err(error).context("read motion analysis frame"),
+        Err(_) => bail!(
+            "timed out reading motion analysis frame from {}",
+            segment.display()
+        ),
+    }
 }
 
 async fn capture_burst(config: &Config) -> Result<Vec<Vec<u8>>> {
