@@ -35,7 +35,8 @@ in
   };
 
   boot = {
-    kernelPackages = pkgs.linuxKernel.packages.linux_rpi4;
+    # Kernel comes from nixos-hardware's raspberry-pi-4 module (pkgs.linux_rpi4
+    # is deprecated in current nixpkgs).
     initrd.availableKernelModules = [
       "xhci_pci"
       "usbhid"

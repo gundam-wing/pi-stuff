@@ -2,10 +2,17 @@
   description = "Raspberry Pi 4 NixOS camera monitor";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/b3d51a0365f6695e7dd5cdf3e180604530ed33b4";
-    nixos-hardware.url = "github:NixOS/nixos-hardware/2e85ae1b7030df39269d29118b1f74944d0c8f15";
+    # Pinned deliberately: bumping nixpkgs/hardware/home-manager on the Pi can
+    # rebuild the kernel and takes a long overnight build. Keep these in sync.
+    # This revision is after the crates.io UA / static.crates.io cargo fetch fix
+    # (nixpkgs f830e6112b4d, 2026-05-27), so newer Rust deps can vendor again.
+    nixpkgs.url = "github:NixOS/nixpkgs/801bef6abd86b91e51083066b83fb354a11fc640";
+    nixos-hardware = {
+      url = "github:NixOS/nixos-hardware/44d95795ee2d475b3d687325e26dcf4ca9104557";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     home-manager = {
-      url = "github:nix-community/home-manager/af119feb17cb242398e0fb97f92b867d25882522";
+      url = "github:nix-community/home-manager/caa6dc59c445ef78b82b8684103d02095158fd82";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     sops-nix = {

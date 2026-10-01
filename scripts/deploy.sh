@@ -5,8 +5,16 @@ set -euo pipefail
 # The monitor/ and web/ trees are flake inputs, so they must be on the Pi.
 #
 # Usage:
-#   ./scripts/deploy.sh              # rsync, then nixos-rebuild switch
-#   ./scripts/deploy.sh --sync-only  # rsync only
+#   ./scripts/deploy.sh                # rsync, then nixos-rebuild switch
+#   ./scripts/deploy.sh --sync-only    # rsync only
+#   ./scripts/deploy.sh --overnight    # rsync, then start rebuild via systemd-run
+#   ./scripts/deploy.sh --status       # snapshot overnight rebuild progress on the Pi
+#
+# Overnight mode is for deliberate nixpkgs/kernel bumps that can run for hours
+# on the capacity-constrained Pi. It prompts once for sudo, then continues as a
+# oneshot systemd unit so the SSH client can disconnect safely. Logs include
+# --print-build-logs (-L) plus a 2-minute heartbeat so quiet compiles still
+# show life. Use --status / scripts/rebuild-status.sh to inspect progress.
 #
 # Optional environment:
 #   PI_HOST       SSH target (default: guest@10.0.1.200)
@@ -14,6 +22,8 @@ set -euo pipefail
 #   FLAKE_ATTR    nixosConfigurations attr (default: myhostname)
 #   PI_JOBS       nix max-jobs (default: 2)
 #   PI_CORES      nix cores (default: 2)
+#   REBUILD_LOG   remote log path (default: /var/log/nixos-rebuild-overnight.log)
+#   SYSTEMD_UNIT  remote unit name (default: nixos-rebuild-overnight.service)
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 host="${PI_HOST:-guest@10.0.1.200}"
@@ -21,13 +31,36 @@ remote_dir="${PI_DIR:-/home/guest/pi-stuff}"
 flake_attr="${FLAKE_ATTR:-myhostname}"
 jobs="${PI_JOBS:-2}"
 cores="${PI_CORES:-2}"
-sync_only=0
+rebuild_log="${REBUILD_LOG:-/var/log/nixos-rebuild-overnight.log}"
+systemd_unit="${SYSTEMD_UNIT:-nixos-rebuild-overnight.service}"
+mode=switch
 
-if [[ "${1:-}" == "--sync-only" ]]; then
-  sync_only=1
-elif [[ "${1:-}" != "" ]]; then
-  echo "usage: $0 [--sync-only]" >&2
-  exit 2
+case "${1:-}" in
+  "") ;;
+  --sync-only) mode=sync-only ;;
+  --overnight) mode=overnight ;;
+  --status) mode=status ;;
+  -h|--help)
+    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  *)
+    echo "usage: $0 [--sync-only|--overnight|--status]" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$mode" == "status" ]]; then
+  # Push only the status helper so this works against an already-running
+  # overnight rebuild without a full tree sync.
+  ssh "$host" "mkdir -p $(printf '%q' "$remote_dir/scripts")"
+  rsync -az "$root/scripts/rebuild-status.sh" "$host:$remote_dir/scripts/rebuild-status.sh"
+  ssh -t "$host" \
+    "sudo env \
+      REBUILD_LOG=$(printf '%q' "$rebuild_log") \
+      SYSTEMD_UNIT=$(printf '%q' "$systemd_unit") \
+      $(printf '%q' "$remote_dir/scripts/rebuild-status.sh")"
+  exit 0
 fi
 
 cd "$root"
@@ -60,11 +93,29 @@ rsync -az --delete --delete-excluded \
   --exclude='segment-*.ts' \
   ./ "$host:$remote_dir/"
 
-if [[ "$sync_only" -eq 1 ]]; then
+rebuild_cmd="nixos-rebuild switch --max-jobs $jobs --cores $cores --flake $remote_dir#$flake_attr"
+
+if [[ "$mode" == "sync-only" ]]; then
   echo "Copied. Rebuild later with:"
-  echo "  ssh -t $host 'sudo nixos-rebuild switch --max-jobs $jobs --cores $cores --flake $remote_dir#$flake_attr'"
+  echo "  ssh -t $host 'sudo $rebuild_cmd'"
+  echo "Or start an overnight detached rebuild with:"
+  echo "  $0 --overnight"
+  exit 0
+fi
+
+if [[ "$mode" == "overnight" ]]; then
+  echo "Starting overnight rebuild on $host ($systemd_unit)"
+  ssh -t "$host" \
+    "sudo env \
+      PI_DIR=$(printf '%q' "$remote_dir") \
+      FLAKE_ATTR=$(printf '%q' "$flake_attr") \
+      PI_JOBS=$(printf '%q' "$jobs") \
+      PI_CORES=$(printf '%q' "$cores") \
+      REBUILD_LOG=$(printf '%q' "$rebuild_log") \
+      SYSTEMD_UNIT=$(printf '%q' "$systemd_unit") \
+      $(printf '%q' "$remote_dir/scripts/overnight-rebuild.sh")"
   exit 0
 fi
 
 echo "Switching $host to $remote_dir#$flake_attr"
-ssh -t "$host" "sudo nixos-rebuild switch --max-jobs $jobs --cores $cores --flake $remote_dir#$flake_attr"
+ssh -t "$host" "sudo $rebuild_cmd"
